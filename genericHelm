@@ -1,0 +1,243 @@
+generic Helm template structure for the ASP.NET Core "Hello World" project. This template will be flexible and reusable across similar projects.
+
+1. Helm Chart Directory Structure
+Here’s the basic structure of the Helm chart:
+
+Copy code
+helloworldswagger/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   ├── hpa.yaml
+│   ├── _helpers.tpl
+└── .helmignore
+2. Chart.yaml
+This file contains metadata about your chart.
+
+yaml
+Copy code
+apiVersion: v2
+name: helloworldswagger
+description: A Helm chart for deploying an ASP.NET Core "Hello World" application
+type: application
+version: 0.1.0
+appVersion: "1.0"
+3. values.yaml
+This file defines the default values for your chart. Users can override these values with their own values.yaml when deploying.
+
+yaml
+Copy code
+replicaCount: 1
+
+image:
+  repository: "<your-dockerhub-username>/helloworldswagger"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+resources: {}
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+4. templates/_helpers.tpl
+This file contains reusable template functions that can be used across other template files.
+
+yaml
+Copy code
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "helloworldswagger.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/*
+Expand the fully qualified name of the chart.
+*/}}
+{{- define "helloworldswagger.fullname" -}}
+{{- $name := include "helloworldswagger.name" . -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+5. templates/deployment.yaml
+This template defines the Kubernetes Deployment resource.
+
+yaml
+Copy code
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helloworldswagger.fullname" . }}
+  labels:
+    {{- include "helloworldswagger.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "helloworldswagger.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helloworldswagger.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+6. templates/service.yaml
+This template defines the Kubernetes Service resource.
+
+yaml
+Copy code
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helloworldswagger.fullname" . }}
+  labels:
+    {{- include "helloworldswagger.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 80
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "helloworldswagger.selectorLabels" . | nindent 4 }}
+7. templates/ingress.yaml
+This template defines the Kubernetes Ingress resource (optional).
+
+yaml
+Copy code
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "helloworldswagger.fullname" . }}
+  labels:
+    {{- include "helloworldswagger.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "helloworldswagger.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+8. templates/hpa.yaml
+This template defines the Kubernetes HorizontalPodAutoscaler resource (optional).
+
+yaml
+Copy code
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "helloworldswagger.fullname" . }}
+spec:
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "helloworldswagger.fullname" . }}
+{{- end }}
+9. .helmignore
+This file specifies files that should be ignored when packaging the Helm chart.
+
+bash
+Copy code
+# Patterns to ignore when packaging Helm charts.
+# This supports shell glob matching, relative path matching, and regex matching.
+# See https://docs.docker.com/engine/reference/builder/#dockerignore-file for syntax details.
+
+*.DS_Store
+*.git
+*.idea
+*.log
+*.swp
+*~
+10. Deploying with Helm
+After configuring the Helm chart:
+
+Package the Helm chart:
+
+bash
+Copy code
+helm package helloworldswagger
+Deploy the chart to your Kubernetes cluster:
+
+bash
+Copy code
+helm install helloworldswagger ./helloworldswagger
+To update the deployment, you can use:
+
+bash
+Copy code
+helm upgrade helloworldswagger ./helloworldswagger
+This generic Helm template should be reusable for any ASP.NET Core Web API project that follows a similar structure. It includes configuration options for scaling, ingress, and resource limits.
