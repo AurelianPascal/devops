@@ -1,0 +1,291 @@
+To create a utility class in Java that saves any document to Azure Cosmos DB using the azure-cosmos library version 4.43.0, you need to set up your project with the required dependencies and create methods to interact with Cosmos DB.
+
+Below is a step-by-step guide, including the utility class, to save a document into Cosmos DB:
+
+1. Setup Project Dependencies
+Make sure you have the following dependencies in your pom.xml file if you are using Maven:
+
+xml
+Copy code
+<dependencies>
+    <!-- Azure Cosmos DB SDK -->
+    <dependency>
+        <groupId>com.azure</groupId>
+        <artifactId>azure-cosmos</artifactId>
+        <version>4.43.0</version>
+    </dependency>
+    <!-- Include other dependencies such as logging if needed -->
+</dependencies>
+2. Utility Class to Save Documents
+Here is a Java utility class that provides a method to save any JSON document to Azure Cosmos DB. This class uses the azure-cosmos library's synchronous API for simplicity.
+
+java
+Copy code
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosClientBuilder;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.CosmosException;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+
+public class CosmosDbUtil {
+
+    private final CosmosClient cosmosClient;
+    private final CosmosDatabase database;
+    private final CosmosContainer container;
+
+    public CosmosDbUtil(String endpointUri, String primaryKey, String databaseName, String containerName) {
+        // Initialize Cosmos client
+        this.cosmosClient = new CosmosClientBuilder()
+                .endpoint(endpointUri)
+                .key(primaryKey)
+                .buildClient();
+
+        // Get database and container references
+        this.database = cosmosClient.getDatabase(databaseName);
+        this.container = database.getContainer(containerName);
+    }
+
+    /**
+     * Save a document to Cosmos DB
+     * @param document The document to save
+     * @param partitionKey The partition key for the document
+     * @return The response from Cosmos DB
+     */
+    public <T> CosmosItemResponse<T> saveDocument(T document, Object partitionKey) {
+        try {
+            return container.createItem(document, new PartitionKey(partitionKey), null);
+        } catch (CosmosException e) {
+            System.err.println("Failed to save document: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Close the Cosmos client connection
+     */
+    public void close() {
+        cosmosClient.close();
+    }
+}
+3. Using the Utility Class
+Here's how you might use this utility class in your application:
+
+java
+Copy code
+package com.example;
+
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.example.util.CosmosDbUtil;
+import java.util.HashMap;
+import java.util.Map;
+
+public class Main {
+
+    public static void main(String[] args) {
+        String endpointUri = "your-cosmos-db-endpoint";
+        String primaryKey = "your-cosmos-db-primary-key";
+        String databaseName = "your-database-name";
+        String containerName = "your-container-name";
+
+        CosmosDbUtil cosmosDbUtil = new CosmosDbUtil(endpointUri, primaryKey, databaseName, containerName);
+
+        try {
+            // Create a sample document
+            Map<String, Object> document = new HashMap<>();
+            document.put("id", "sample-document-id");
+            document.put("name", "Sample Document");
+            document.put("description", "This is a sample document for Cosmos DB.");
+
+            // Save the document to Cosmos DB
+            CosmosItemResponse<Map<String, Object>> response = cosmosDbUtil.saveDocument(document, document.get("id"));
+            System.out.println("Document saved successfully with status code: " + response.getStatusCode());
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            cosmosDbUtil.close();
+        }
+    }
+}
+Notes:
+Error Handling: The utility class handles exceptions by printing the error message. You may want to implement more sophisticated error handling depending on your application's needs.
+Generics: The saveDocument method uses generics (<T>) to allow any type of document to be saved, as long as it can be serialized to JSON.
+Partition Key: The partition key is required for Cosmos DB operations. Ensure your documents and container are configured with appropriate partitioning.
+Summary
+This utility class encapsulates the connection and interaction logic with Azure Cosmos DB. By using this utility, you can save documents to Cosmos DB in a clean and reusable manner. Make sure to replace placeholders like endpointUri, primaryKey, databaseName, and containerName with actual values from your Azure Cosmos DB account.
+
+
+
+
+
+To test the CosmosDbUtil class, you can write a JUnit test class. This test class will use a mocking framework like Mockito to mock the interactions with Cosmos DB. This is crucial for unit testing because it isolates the functionality of the utility class without needing a real Cosmos DB instance.
+
+Below is a sample test class using JUnit and Mockito to test the CosmosDbUtil class.
+
+1. Setup Project Dependencies for Testing
+Add the following dependencies to your pom.xml file for JUnit and Mockito:
+
+xml
+Copy code
+<dependencies>
+    <!-- JUnit 5 -->
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>5.9.0</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-engine</artifactId>
+        <version>5.9.0</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- Mockito -->
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>5.4.0</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- Azure Cosmos DB SDK (only if Cosmos classes need to be used in tests) -->
+    <dependency>
+        <groupId>com.azure</groupId>
+        <artifactId>azure-cosmos</artifactId>
+        <version>4.43.0</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+2. Test Class for CosmosDbUtil
+java
+Copy code
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+class CosmosDbUtilTest {
+
+    private CosmosDbUtil cosmosDbUtil;
+    private CosmosClient mockCosmosClient;
+    private CosmosDatabase mockDatabase;
+    private CosmosContainer mockContainer;
+
+    @BeforeEach
+    void setUp() {
+        // Create mock instances
+        mockCosmosClient = mock(CosmosClient.class);
+        mockDatabase = mock(CosmosDatabase.class);
+        mockContainer = mock(CosmosContainer.class);
+
+        // Mock Cosmos client builder methods
+        when(mockCosmosClient.getDatabase(any(String.class))).thenReturn(mockDatabase);
+        when(mockDatabase.getContainer(any(String.class))).thenReturn(mockContainer);
+
+        // Initialize CosmosDbUtil with mock client
+        cosmosDbUtil = new CosmosDbUtil(mockCosmosClient, mockDatabase, mockContainer);
+    }
+
+    @Test
+    void testSaveDocument() {
+        // Sample document
+        String documentId = "test-document-id";
+        String documentName = "Test Document";
+
+        TestDocument document = new TestDocument(documentId, documentName);
+
+        // Mock CosmosItemResponse
+        CosmosItemResponse<TestDocument> mockResponse = mock(CosmosItemResponse.class);
+        when(mockResponse.getStatusCode()).thenReturn(201);
+
+        // Mock container behavior
+        when(mockContainer.createItem(eq(document), any(PartitionKey.class), isNull()))
+                .thenReturn(mockResponse);
+
+        // Call method
+        CosmosItemResponse<TestDocument> response = cosmosDbUtil.saveDocument(document, documentId);
+
+        // Verify interactions and assertions
+        ArgumentCaptor<PartitionKey> partitionKeyCaptor = ArgumentCaptor.forClass(PartitionKey.class);
+        verify(mockContainer, times(1)).createItem(eq(document), partitionKeyCaptor.capture(), isNull());
+
+        assertEquals(201, response.getStatusCode());
+        assertEquals(documentId, partitionKeyCaptor.getValue().getKey());
+    }
+
+    @Test
+    void testClose() {
+        // Call close method
+        cosmosDbUtil.close();
+
+        // Verify that the close method was called on the Cosmos client
+        verify(mockCosmosClient, times(1)).close();
+    }
+
+    // Helper class to represent a test document
+    static class TestDocument {
+        private String id;
+        private String name;
+
+        public TestDocument(String id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+}
+Explanation of the Test Class
+Setup Mocks with Mockito:
+
+CosmosClient, CosmosDatabase, and CosmosContainer are mocked using Mockito. This avoids real network calls and makes the test fast and isolated.
+Mock behaviors are defined using when(...).thenReturn(...) to simulate Cosmos DB responses.
+Initialization in setUp Method:
+
+This method runs before each test, setting up the mock objects and initializing the CosmosDbUtil class.
+Test Methods:
+
+testSaveDocument(): Tests the saveDocument method by verifying that the method interacts correctly with the mocked CosmosContainer. It also checks if the document was saved successfully using the mocked response.
+testClose(): Tests the close method to ensure the Cosmos client is closed properly.
+Helper Class TestDocument:
+
+This inner class represents a simple test document with id and name fields. It's used to simulate saving a document to Cosmos DB.
+Notes
+Dependency Injection: For testing purposes, it's common to inject mocks into the class under test. If your application allows dependency injection (DI), you could refactor CosmosDbUtil to accept CosmosClient as a constructor parameter, making testing easier.
+Assertions: assertEquals checks that the expected and actual values match, ensuring the method's behavior is as expected.
+Mockito's ArgumentCaptor: This is used to capture arguments passed to mocked methods, which allows for more detailed assertions.
+This test class provides comprehensive testing for the CosmosDbUtil class, ensuring that the interaction with Cosmos DB is properly abstracted and behaves as expected under different conditions.
+
+
+
+
+
+
