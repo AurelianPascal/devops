@@ -250,7 +250,165 @@ Jackson: Provides easy-to-use and powerful capabilities for handling JSON. It's 
 
 
 
-Continue generating
+---
+
+
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import com.azure.cosmos.models.ThroughputProperties;
+import com.azure.cosmos.models.CosmosContainerProperties;
+import com.example.generated.FullMessage;
+import com.example.generated.Header;
+import com.example.generated.ParentId;
+import com.example.generated.Payload;
+import com.google.protobuf.util.JsonFormat;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+class CosmosDbUtilTest {
+
+    private CosmosDbUtil cosmosDbUtil;
+    private CosmosClient mockCosmosClient;
+    private CosmosDatabase mockDatabase;
+    private CosmosContainer mockContainer;
+
+    @BeforeEach
+    void setUp() {
+        // Create mock instances
+        mockCosmosClient = mock(CosmosClient.class);
+        mockDatabase = mock(CosmosDatabase.class);
+        mockContainer = mock(CosmosContainer.class);
+
+        // Mock Cosmos client builder methods
+        when(mockCosmosClient.getDatabase(any(String.class))).thenReturn(mockDatabase);
+        when(mockDatabase.getContainer(any(String.class))).thenReturn(mockContainer);
+
+        // Initialize CosmosDbUtil with mock client
+        cosmosDbUtil = new CosmosDbUtil("https://fake-account.documents.azure.com:443/",
+                "fakePrimaryKey", "TestDatabase");
+    }
+
+    @Test
+    void testSaveProtoMessage() throws Exception {
+        // Create a Header instance
+        Header header = Header.newBuilder()
+                .setKey("test-key")
+                .setDataType("TestType")
+                .setLabel("Test Label")
+                .build();
+
+        // Create a Payload instance
+        Payload payload = Payload.newBuilder()
+                .setJson("{\"field\":\"value\"}")
+                .build();
+
+        // Create a FullMessage instance
+        FullMessage fullMessage = FullMessage.newBuilder()
+                .setId("test-id")
+                .setHeader(header)
+                .setTs(System.currentTimeMillis())
+                .addDuplicates("duplicate-1")
+                .setPayload(payload)
+                .addParentIds(ParentId.newBuilder()
+                        .setId("parent-id")
+                        .setDataType("ParentType")
+                        .setLabel("Parent Label")
+                        .setKey("parent-key")
+                        .build())
+                .build();
+
+        // Mock CosmosItemResponse
+        CosmosItemResponse<Map<String, Object>> mockResponse = mock(CosmosItemResponse.class);
+        when(mockResponse.getStatusCode()).thenReturn(201);
+
+        // Mock container behavior
+        when(mockContainer.createItem(any(Map.class), any(PartitionKey.class), isNull()))
+                .thenReturn(mockResponse);
+
+        // Call method
+        CosmosItemResponse<Map<String, Object>> response = cosmosDbUtil.saveProtoMessage(fullMessage);
+
+        // Verify interactions and assertions
+        ArgumentCaptor<Map<String, Object>> documentCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<PartitionKey> partitionKeyCaptor = ArgumentCaptor.forClass(PartitionKey.class);
+        verify(mockContainer, times(1)).createItem(documentCaptor.capture(), partitionKeyCaptor.capture(), isNull());
+
+        assertEquals(201, response.getStatusCode());
+        assertEquals("test-key", partitionKeyCaptor.getValue().getKey());
+
+        // Check that the payload matches the expected serialized output
+        String expectedJson = JsonFormat.printer().print(fullMessage);
+        String capturedJson = JsonFormat.printer().print(fullMessage);
+        assertEquals(expectedJson, capturedJson);
+    }
+
+    @Test
+    void testEnsureContainerExists() {
+        // Mock exception to simulate container does not exist
+        when(mockContainer.read()).thenThrow(new com.azure.cosmos.CosmosException("Not Found", 404, null, null, null));
+        when(mockDatabase.createContainerIfNotExists(any(CosmosContainerProperties.class), any(ThroughputProperties.class)))
+                .thenReturn(mockContainer);
+
+        // Call the private method via reflection for testing
+        try {
+            java.lang.reflect.Method method = CosmosDbUtil.class.getDeclaredMethod("ensureContainerExists", String.class);
+            method.setAccessible(true);
+
+            // Execute the method
+            method.invoke(cosmosDbUtil, "TestType");
+
+            // Verify container creation
+            verify(mockDatabase, times(1)).createContainerIfNotExists(any(), any());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Test
+    void testSaveProtoMessageWithException() {
+        // Create a Header instance
+        Header header = Header.newBuilder()
+                .setKey("test-key")
+                .setDataType("TestType")
+                .build();
+
+        // Create a FullMessage instance
+        FullMessage fullMessage = FullMessage.newBuilder()
+                .setId("test-id")
+                .setHeader(header)
+                .build();
+
+        // Mock exception during item creation
+        when(mockContainer.createItem(any(Map.class), any(PartitionKey.class), isNull()))
+                .thenThrow(new com.azure.cosmos.CosmosException("Failure", 500, null, null, null));
+
+        // Expect an exception to be thrown
+        assertThrows(RuntimeException.class, () -> cosmosDbUtil.saveProtoMessage(fullMessage));
+    }
+
+    @Test
+    void testClose() {
+        // Call close method
+        cosmosDbUtil.close();
+
+        // Verify that the close method was called on the Cosmos client
+        verify(mockCosmosClient, times(1)).close();
+    }
+}
 
 
 
