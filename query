@@ -1,0 +1,14 @@
+SELECT 
+    c.id,
+    c.header,
+    tc
+FROM 
+    c
+JOIN 
+    tc IN c.payload.tradeComponent
+WHERE 
+    c.payload.tradeCORE.tradingBookId IN ("<TradingBookId1>", "<TradingBookId2>", "<TradingBookId3>") -- Replace with actual Trading Book IDs
+    AND c.header.validFrom >= <StartDate> -- Replace with the actual start date (epoch millis)
+    AND c.header.validFrom <= <EndDate> -- Replace with the actual end date (epoch millis)
+    AND (c.header.expiry IS NULL OR c.header.expiry > GetCurrentTimestamp()) -- Check that the document has not expired
+    AND (tc.componentExpiry IS NULL OR tc.componentExpiry > GetCurrentTimestamp()) -- Only include non-expired components
