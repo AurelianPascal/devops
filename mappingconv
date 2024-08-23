@@ -1,0 +1,155 @@
+Spring Data Cosmos library version 5.10.0, CosmosTemplate also requires a MappingCosmosConverter to handle the conversion between Java objects and the JSON format used by Cosmos DB.
+
+Updated Configuration with MappingCosmosConverter
+We need to include the MappingCosmosConverter in the configuration to correctly instantiate the CosmosTemplate. This converter is responsible for mapping entities to their corresponding database representation and vice versa.
+
+Updated Spring Configuration Class with MappingCosmosConverter
+Here's the corrected version of the configuration, including the MappingCosmosConverter:
+
+java
+Copy code
+package com.example.demo.config;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosClientBuilder;
+import com.azure.cosmos.ConsistencyLevel;
+import com.azure.spring.data.cosmos.config.CosmosConfig;
+import com.azure.spring.data.cosmos.core.CosmosTemplate;
+import com.azure.spring.data.cosmos.core.mapping.CosmosMappingContext;
+import com.azure.spring.data.cosmos.core.mapping.MappingCosmosConverter;
+import com.azure.spring.data.cosmos.repository.config.EnableCosmosRepositories;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+
+@Configuration
+@EnableCosmosRepositories(basePackages = "com.example.demo.repository")
+public class CosmosConfig {
+
+    @Value("${azure.cosmos.uri}")
+    private String uri;
+
+    @Value("${azure.cosmos.key}")
+    private String key;
+
+    @Value("${azure.cosmos.database}")
+    private String database;
+
+    @Value("${azure.cosmos.consistency-level}")
+    private String consistencyLevel;
+
+    @Bean
+    public CosmosClient cosmosClient() {
+        return new CosmosClientBuilder()
+                .endpoint(uri)
+                .key(key)
+                .consistencyLevel(ConsistencyLevel.valueOf(consistencyLevel.toUpperCase()))
+                .buildClient();
+    }
+
+    @Bean
+    public CosmosConfig cosmosConfig() {
+        return CosmosConfig.builder()
+                .responseDiagnosticsProcessor(responseDiagnostics -> 
+                        System.out.println(responseDiagnostics.toString()))
+                .build();
+    }
+
+    @Bean
+    public CosmosMappingContext cosmosMappingContext() {
+        return new CosmosMappingContext();
+    }
+
+    @Bean
+    public MappingCosmosConverter mappingCosmosConverter(CosmosMappingContext cosmosMappingContext) {
+        return new MappingCosmosConverter(cosmosMappingContext);
+    }
+
+    @Bean
+    @Primary
+    public CosmosTemplate cosmosTemplate(CosmosClient cosmosClient,
+                                         CosmosConfig cosmosConfig,
+                                         MappingCosmosConverter mappingCosmosConverter) {
+        return new CosmosTemplate(cosmosClient, cosmosConfig, mappingCosmosConverter, database);
+    }
+}
+Explanation of the Configuration Class
+CosmosClient: Set up using CosmosClientBuilder to connect to the Cosmos DB instance with the configured endpoint, key, and consistency level.
+
+CosmosConfig: Provides configuration options for Cosmos DB interactions, including diagnostics for logging.
+
+CosmosMappingContext: Manages the context for mapping Cosmos DB entities, used by MappingCosmosConverter.
+
+MappingCosmosConverter: Converts Java entities to the format required by Cosmos DB and vice versa. It takes a CosmosMappingContext as a parameter.
+
+CosmosTemplate:
+
+Combines CosmosClient, CosmosConfig, MappingCosmosConverter, and the database name.
+Marked with @Primary to ensure it's used where multiple beans of the same type are present.
+Updated CosmosDBUtil Class Using the Correct CosmosTemplate
+java
+Copy code
+package com.example.demo.util;
+
+import com.azure.cosmos.models.CosmosItemRequestOptions;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import com.azure.spring.data.cosmos.core.CosmosTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Component
+public class CosmosDBUtil<T> {
+
+    private static final Logger logger = LoggerFactory.getLogger(CosmosDBUtil.class);
+
+    private final CosmosTemplate cosmosTemplate;
+
+    public CosmosDBUtil(CosmosTemplate cosmosTemplate) {
+        this.cosmosTemplate = cosmosTemplate;
+    }
+
+    /**
+     * Save a single document to the specified Cosmos DB container.
+     */
+    public CosmosItemResponse<T> saveDocument(String containerName, String partitionKey, T document) {
+        try {
+            return cosmosTemplate.insert(containerName, document, new PartitionKey(partitionKey), new CosmosItemRequestOptions());
+        } catch (Exception e) {
+            logger.error("Failed to save document to Cosmos DB: {}", e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Save a list of documents to the specified Cosmos DB container.
+     */
+    public void saveDocumentsInBatch(String containerName, String partitionKey, List<T> documents) {
+        for (T document : documents) {
+            try {
+                cosmosTemplate.insert(containerName, document, new PartitionKey(partitionKey), new CosmosItemRequestOptions());
+                logger.info("Document saved successfully to Cosmos DB.");
+            } catch (Exception e) {
+                logger.error("Failed to save document to Cosmos DB: {}", e.getMessage());
+            }
+        }
+    }
+}
+Summary of Corrections
+MappingCosmosConverter:
+
+Added to the configuration as required by the CosmosTemplate to handle entity mapping.
+CosmosTemplate:
+
+Now correctly uses CosmosClient, CosmosConfig, MappingCosmosConverter, and the database name to interact with Cosmos DB.
+Error Logging and Handling:
+
+Error messages and exception handling are included to log and manage any issues that arise during document operations.
+Primary Bean:
+
+Marked CosmosTemplate with @Primary to ensure that it is used in cases where there might be multiple beans of the same type.
+This setup should now correctly integrate with Azure Cosmos DB using the latest version of the Azure Spring Data Cosmos library, and it follows Spring best practices for configuration and dependency management. It will provide a robust and flexible configuration to support both development and production environments.
