@@ -1,0 +1,256 @@
+
+If you prefer not to use JsonUtils and want to use another library to handle the conversion between Protocol Buffers and JSON, you can use the Jackson library, which is a popular choice for JSON processing in Java. Specifically, you can use the jackson-databind module along with the protobuf-java-util module to handle Protocol Buffers.
+
+Updated CosmosDbUtil Class
+Below is the CosmosDbUtil class updated to use Jackson for JSON processing and protobuf-java-util for Protocol Buffers to JSON conversion:
+
+java
+Copy code
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosClientBuilder;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.CosmosException;
+import com.azure.cosmos.models.CosmosContainerProperties;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import com.azure.cosmos.models.ThroughputProperties;
+import com.example.generated.FullMessage;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+
+import java.util.Map;
+
+public class CosmosDbUtil {
+
+    private final CosmosClient cosmosClient;
+    private final CosmosDatabase database;
+    private final ObjectMapper objectMapper;
+
+    public CosmosDbUtil(String endpointUri, String primaryKey, String databaseName) {
+        // Initialize Cosmos client
+        this.cosmosClient = new CosmosClientBuilder()
+                .endpoint(endpointUri)
+                .key(primaryKey)
+                .buildClient();
+
+        // Get database reference
+        this.database = cosmosClient.getDatabase(databaseName);
+
+        // Initialize Jackson ObjectMapper
+        this.objectMapper = new ObjectMapper();
+    }
+
+    /**
+     * Save a Proto message to Cosmos DB, creating a container if it does not exist.
+     * @param fullMessage The FullMessage Proto object to save
+     * @return The response from Cosmos DB
+     */
+    public CosmosItemResponse<Map<String, Object>> saveProtoMessage(FullMessage fullMessage) {
+        try {
+            // Extract dataType and key from the header
+            String dataType = fullMessage.getHeader().getDataType();
+            String dataKey = fullMessage.getHeader().getKey();
+
+            // Ensure container exists based on dataType
+            CosmosContainer container = ensureContainerExists(dataType);
+
+            // Convert the Proto message to a JSON string
+            String jsonString = JsonFormat.printer().print(fullMessage);
+
+            // Parse the JSON string into a Map using Jackson
+            Map<String, Object> document = objectMapper.readValue(jsonString, new TypeReference<Map<String, Object>>() {});
+
+            // Save document
+            return container.createItem(document, new PartitionKey(dataKey), null);
+        } catch (CosmosException | InvalidProtocolBufferException e) {
+            System.err.println("Failed to save document: " + e.getMessage());
+            throw new RuntimeException("Failed to save document", e);
+        } catch (Exception e) {
+            System.err.println("Failed to process JSON: " + e.getMessage());
+            throw new RuntimeException("Failed to process JSON", e);
+        }
+    }
+
+    /**
+     * Ensure a container with the given name exists, creating it if necessary.
+     * @param containerName The name of the container
+     * @return The CosmosContainer instance
+     */
+    private CosmosContainer ensureContainerExists(String containerName) {
+        CosmosContainer container;
+        try {
+            // Check if container exists by trying to get it
+            container = database.getContainer(containerName);
+            container.read();
+        } catch (CosmosException e) {
+            if (e.getStatusCode() == 404) { // Container does not exist
+                // Create container with `dataKey` as the partition key
+                CosmosContainerProperties containerProperties =
+                        new CosmosContainerProperties(containerName, "/header/key");
+
+                // Customize throughput settings if needed
+                container = database.createContainerIfNotExists(
+                        containerProperties,
+                        ThroughputProperties.createManualThroughput(400)).getContainer();
+            } else {
+                throw e;
+            }
+        }
+        return container;
+    }
+
+    /**
+     * Close the Cosmos client connection
+     */
+    public void close() {
+        cosmosClient.close();
+    }
+}
+Explanation of the Code
+Dependencies:
+
+Jackson (ObjectMapper): Used to convert JSON strings into Java Maps. The objectMapper.readValue() method converts the JSON string into a Map<String, Object>.
+Protobuf (JsonFormat): Used for converting the Protocol Buffers message to a JSON string. The JsonFormat.printer().print() method serializes the protobuf message into a JSON format string.
+Ensure Container Exists:
+
+Similar to the previous example, the method checks if a container exists and creates it if it doesn't.
+Exception Handling:
+
+Handles CosmosException for errors related to Cosmos DB operations.
+Handles InvalidProtocolBufferException and other generic exceptions for JSON processing errors.
+Updated pom.xml
+Here's the pom.xml including necessary dependencies for Jackson and Protocol Buffers:
+
+xml
+Copy code
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>cosmosdb-protobuf-demo</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <name>CosmosDB Protobuf Demo</name>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.version>5.9.0</junit.version>
+        <mockito.version>5.4.0</mockito.version>
+        <azure.cosmos.version>4.43.0</azure.cosmos.version>
+        <protobuf.version>3.23.0</protobuf.version>
+        <jackson.version>2.15.2</jackson.version>
+    </properties>
+
+    <dependencies>
+        <!-- Azure Cosmos DB SDK -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-cosmos</artifactId>
+            <version>${azure.cosmos.version}</version>
+        </dependency>
+
+        <!-- JUnit 5 for Testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mockito for Mocking -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Google Protocol Buffers -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java-util</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+
+        <!-- Jackson Databind -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Compiler Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+
+            <!-- Protobuf Plugin -->
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>0.6.1</version>
+                <configuration>
+                    <protocArtifact>
+                        com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}
+                    </protocArtifact>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>compile-custom</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <repositories>
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </repository>
+    </repositories>
+</project>
+Summary
+Jackson: Provides easy-to-use and powerful capabilities for handling JSON. It's widely used and well-supported, making it a great choice for JSON processing in Java.
+**
+
+
+
+
+
+
+Continue generating
+
+
+
