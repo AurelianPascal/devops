@@ -1,0 +1,266 @@
+Based on the updated image you provided, we can derive that the data schema contains a header section with dataType and key, which will be used for container name and partition key, respectively. The rest of the message, including fields like id, duplicates, payload, and parentIds, represents the full document that needs to be saved.
+
+To align with the Protocol Buffers (proto) schema and to save the entire message, we will create a CosmosDbUtil class to handle serialization and saving, as well as JUnit tests for validating this behavior.
+
+1. Define the Proto File
+To begin with, let's assume the following proto file structure based on the image:
+
+proto
+Copy code
+syntax = "proto3";
+
+message Header {
+    string key = 1;
+    string dataType = 2;
+    string label = 3;
+    string metaData = 4;
+    int64 validFrom = 5;
+    int64 expiry = 6;
+    repeated string entitlements = 7;
+}
+
+message ParentId {
+    string id = 1;
+    string dataType = 2;
+    string label = 3;
+    string key = 4;
+}
+
+message Payload {
+    string json = 1;
+}
+
+message FullMessage {
+    string id = 1;
+    Header header = 2;
+    int64 ts = 3;
+    repeated string duplicates = 4;
+    Payload payload = 5;
+    repeated ParentId parentIds = 6;
+}
+After generating the Java classes using protoc, you will have a FullMessage class, among others, that you can use for serialization and deserialization.
+
+2. Update CosmosDbUtil Class to Work with Proto-Generated Classes
+Here’s an updated version of CosmosDbUtil class that works with the FullMessage proto class:
+
+java
+Copy code
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosClientBuilder;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.CosmosException;
+import com.azure.cosmos.models.CosmosContainerProperties;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import com.azure.cosmos.models.ThroughputProperties;
+import com.example.generated.FullMessage; // Adjust the import based on your proto package
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+
+import java.util.Map;
+
+public class CosmosDbUtil {
+
+    private final CosmosClient cosmosClient;
+    private final CosmosDatabase database;
+
+    public CosmosDbUtil(String endpointUri, String primaryKey, String databaseName) {
+        // Initialize Cosmos client
+        this.cosmosClient = new CosmosClientBuilder()
+                .endpoint(endpointUri)
+                .key(primaryKey)
+                .buildClient();
+
+        // Get database reference
+        this.database = cosmosClient.getDatabase(databaseName);
+    }
+
+    /**
+     * Save a Proto message to Cosmos DB, creating a container if it does not exist.
+     * @param fullMessage The FullMessage Proto object to save
+     * @return The response from Cosmos DB
+     */
+    public CosmosItemResponse<Map<String, Object>> saveProtoMessage(FullMessage fullMessage) {
+        try {
+            // Extract dataType and key from the header
+            String dataType = fullMessage.getHeader().getDataType();
+            String dataKey = fullMessage.getHeader().getKey();
+
+            // Ensure container exists based on dataType
+            CosmosContainer container = ensureContainerExists(dataType);
+
+            // Convert the Proto message to a JSON string
+            String jsonString = JsonFormat.printer().print(fullMessage);
+
+            // Parse the JSON string into a Map
+            Map<String, Object> document = JsonUtils.jsonToMap(jsonString);
+
+            // Save document
+            return container.createItem(document, new PartitionKey(dataKey), null);
+        } catch (CosmosException | InvalidProtocolBufferException e) {
+            System.err.println("Failed to save document: " + e.getMessage());
+            throw new RuntimeException("Failed to save document", e);
+        }
+    }
+
+    /**
+     * Ensure a container with the given name exists, creating it if necessary.
+     * @param containerName The name of the container
+     * @return The CosmosContainer instance
+     */
+    private CosmosContainer ensureContainerExists(String containerName) {
+        CosmosContainer container;
+        try {
+            // Check if container exists by trying to get it
+            container = database.getContainer(containerName);
+            container.read();
+        } catch (CosmosException e) {
+            if (e.getStatusCode() == 404) { // Container does not exist
+                // Create container with `dataKey` as the partition key
+                CosmosContainerProperties containerProperties =
+                        new CosmosContainerProperties(containerName, "/header/key");
+
+                // You may want to customize throughput settings
+                container = database.createContainerIfNotExists(
+                        containerProperties,
+                        ThroughputProperties.createManualThroughput(400)).getContainer();
+            } else {
+                throw e;
+            }
+        }
+        return container;
+    }
+
+    /**
+     * Close the Cosmos client connection
+     */
+    public void close() {
+        cosmosClient.close();
+    }
+}
+3. JUnit Test Class for CosmosDbUtil
+Here’s how you can write JUnit tests for the CosmosDbUtil class:
+
+java
+Copy code
+package com.example.util;
+
+import com.azure.cosmos.CosmosClient;
+import com.azure.cosmos.CosmosContainer;
+import com.azure.cosmos.CosmosDatabase;
+import com.azure.cosmos.models.CosmosItemResponse;
+import com.azure.cosmos.models.PartitionKey;
+import com.example.generated.FullMessage;
+import com.example.generated.Header;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+class CosmosDbUtilTest {
+
+    private CosmosDbUtil cosmosDbUtil;
+    private CosmosClient mockCosmosClient;
+    private CosmosDatabase mockDatabase;
+    private CosmosContainer mockContainer;
+
+    @BeforeEach
+    void setUp() {
+        // Create mock instances
+        mockCosmosClient = mock(CosmosClient.class);
+        mockDatabase = mock(CosmosDatabase.class);
+        mockContainer = mock(CosmosContainer.class);
+
+        // Mock Cosmos client builder methods
+        when(mockCosmosClient.getDatabase(any(String.class))).thenReturn(mockDatabase);
+        when(mockDatabase.getContainer(any(String.class))).thenReturn(mockContainer);
+
+        // Initialize CosmosDbUtil with mock client
+        cosmosDbUtil = new CosmosDbUtil(mockCosmosClient, mockDatabase);
+    }
+
+    @Test
+    void testSaveProtoMessage() {
+        // Create a Header instance
+        Header header = Header.newBuilder()
+                .setKey("test-key")
+                .setDataType("TestType")
+                .setLabel("Test Label")
+                .build();
+
+        // Create a FullMessage instance
+        FullMessage fullMessage = FullMessage.newBuilder()
+                .setId("test-id")
+                .setHeader(header)
+                .setTs(System.currentTimeMillis())
+                .addDuplicates("duplicate-1")
+                .build();
+
+        // Mock CosmosItemResponse
+        CosmosItemResponse<Map<String, Object>> mockResponse = mock(CosmosItemResponse.class);
+        when(mockResponse.getStatusCode()).thenReturn(201);
+
+        // Mock container behavior
+        when(mockContainer.createItem(any(Map.class), any(PartitionKey.class), isNull()))
+                .thenReturn(mockResponse);
+
+        // Call method
+        CosmosItemResponse<Map<String, Object>> response = cosmosDbUtil.saveProtoMessage(fullMessage);
+
+        // Verify interactions and assertions
+        ArgumentCaptor<Map<String, Object>> documentCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<PartitionKey> partitionKeyCaptor = ArgumentCaptor.forClass(PartitionKey.class);
+        verify(mockContainer, times(1)).createItem(documentCaptor.capture(), partitionKeyCaptor.capture(), isNull());
+
+        assertEquals(201, response.getStatusCode());
+        assertEquals("test-key", partitionKeyCaptor.getValue().getKey());
+    }
+
+    @Test
+    void testEnsureContainerExists() {
+        // Call private method via reflection for testing
+        // Reflection is used for demonstration purposes; direct testing is preferable when possible
+        try {
+            // Mock exception to simulate container does not exist
+            when(mockContainer.read()).thenThrow(new CosmosException("Not Found", 404, null, null, null));
+            when(mockDatabase.createContainerIfNotExists(any(), any()))
+                    .thenReturn(mockContainer);
+
+            // Use reflection to access private method
+            java.lang.reflect.Method method = CosmosDbUtil.class.getDeclaredMethod("ensureContainerExists", String.class);
+            method.setAccessible(true);
+
+            // Execute the method
+            method.invoke(cosmosDbUtil, "TestType");
+
+            // Verify container creation
+            verify(mockDatabase, times(1)).createContainerIfNotExists(any(), any());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Test
+    void testClose() {
+        // Call close method
+        cosmosDbUtil.close();
+
+        // Verify that the close method was called on the Cosmos client
+        verify(mockCosmosClient, times(1)).close();
+    }
+}
+Key Points in the JUnit Test Class
+Setup Mocks: The test class uses Mockito to mock the Cosmos DB client, database, and container. This approach prevents real network calls and isolates the tests.
+
+Test for Saving Proto Message (testSaveProtoMessage):
+
+A FullMessage instance is created and populated with test data.
